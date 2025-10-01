@@ -3,7 +3,7 @@ import pygame_gui
 from pygame_gui.core import ObjectID
 from math import ceil
 import anim_wheel
-
+import sys
 from datetime import datetime, timezone
 import numpy as np
 
@@ -11,6 +11,20 @@ import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.backends.backend_agg as agg
+
+from monitors import MSP600
+
+class Buttonplacer:
+    def __init__(self, dim_ovr_x, dim_ovr_y, dim_ovr_w, dim_ovr_h):
+        self.dim_ovr_x, self.dim_ovr_y, self.dim_ovr_w, self.dim_ovr_h = dim_ovr_x, dim_ovr_y, dim_ovr_w, dim_ovr_h
+        self.dim_but_w = 120
+        self.dim_but_h = 40
+        self.dim_but_pad = 1
+
+    def placetopright(self, i):
+        return pygame.Rect((self.dim_ovr_w - self.dim_but_w - self.dim_but_pad, self.dim_but_pad+ (i-1)*(2*self.dim_but_pad + self.dim_but_h)), (self.dim_but_w, self.dim_but_h))
+
+np.random.seed(532)
 clock = pygame.time.Clock()
 
 matplotlib.use("Agg")
@@ -30,123 +44,13 @@ plt.rcParams.update({
     "figure.edgecolor": "black",
 })
 
-class Monitor:
-    def __init__(self, pin, dt_rolling = 50, nt = 100):
-        t_now = datetime.utcnow()
-        t_now_ts = datetime.timestamp(t_now)
-        self.pin = pin
-        self.dt_rolling = dt_rolling
-        self.plot_size_inches = [4, 2]
-        self.keepdata_trelative = -30
-        self.plot_trelative = np.linspace(self.keepdata_trelative, 0, 200)
-        self.plot_y = np.zeros((self.plot_trelative.size))
-        self.recent_t = [t_now_ts] #log here
-        self.recent_y = [0] #log here
-        #self.__create_figure_elements()
-    #def __create_figure_elements(self):
-        fig = plt.figure(figsize=[self.plot_size_inches[0], self.plot_size_inches[1]], dpi=100)
-        fig.patch.set_alpha(0.1) # make the surrounding of the plot 90% transparent
-        ax = fig.gca()
-
-        line = ax.plot(self.plot_trelative, self.plot_y, color='red', marker='None')
-
-        #canvas = agg.FigureCanvasAgg(fig)
-        self.fig = fig
-        self.ax = ax
-        self.plot_elements = {label_PRES: line}
-
-    def collect(self):#, dt_min = 0):
-        t_now = datetime.utcnow()
-        t_now_ts = datetime.timestamp(t_now)
-
-        # #wait for next measurement
-        # if t_now_ts - self.recent_t[-1] < dt_min:
-        #     pygame.time.wait(round(1000*(t_now_ts - self.recent_t[-1])))
-
-        #get measurement at t_now:
-        y = self.recent_y[-1] + 0.1*(np.random.rand(1)[0]-0.5)
-        #add new data:
-        if not np.isnan(y):
-            self.recent_t.append(t_now_ts)
-            self.recent_y.append(y)
-
-        #clear old data:
-        for idxt_rec in range(len(self.recent_t)):
-            if t_now_ts - self.recent_t[idxt_rec] > self.keepdata_trelative:
-                break
-        self.recent_t = self.recent_t[idxt_rec:]
-        self.recent_y = self.recent_y[idxt_rec:]
-
-    def log_to_disk(self):
-        #store the raw data
-        #recalculate NOBS, mean, etc.
-        pass
-
-    def interpolate_data_to_plot_axis(self):
-        #interpolate new plot arrays, then delete old data:
-        self.plot_y = [self.recent_y[-1]] #got the first element at delta t = 0
-
-        idx_ti0 = len(self.recent_t) - 1 #save time by initializing here, this will always descend in the below loop
-        for t_delta in self.plot_trelative[::-1][1:]:
-            #[::-1] because we go from delta t = 0 to self.keepdata_trelative (i.e. - 60)
-            #[1:] because we already got y at delta t = 0 in the above line
-            ti = self.recent_t[-1] + t_delta
-
-            while self.recent_t[idx_ti0] > ti:
-                idx_ti0 -= 1
-                if idx_ti0 < 0:
-                    break
-            idx_ti1 = idx_ti0 + 1
-
-            if idx_ti1 == 0:
-                #fill the rest with nans and break
-                self.plot_y = self.plot_y + [np.nan] * (len(self.plot_trelative) - len(self.plot_y))
-                break
-            else:
-                frac = (ti - self.recent_t[idx_ti0]) / (self.recent_t[idx_ti1] - self.recent_t[idx_ti0])
-
-            self.plot_y.append(self.recent_y[idx_ti0] + frac * (self.recent_y[idx_ti1] - self.recent_y[idx_ti0]))
-
-            #if len(self.recent_t) == 10:
-            #    print(self.recent_t[idx_ti0] - t_now_ts, ti - t_now_ts, self.recent_t[idx_ti1] - t_now_ts)
-            #    print("", idx_ti0, idx_ti1, len(self.recent_t), frac)#,  ti - t_now_ts, [t_ - t_now_ts for t_ in self.recent_t])
-
-        self.plot_y = np.array(self.plot_y[::-1])
-
-    def get_updated_figure(self, pe_key, ma=15):
-        self.interpolate_data_to_plot_axis()
-
-        #perform a moving average, but keep the array size the same, so the beginning and end values are not affected:
-        av = np.zeros(self.plot_y.size)
-        for r in range((ma // 2), 0, -1): #i.e. 3, 2, 1
-            av[r:] = av[r:] + np.roll(self.plot_y, r)[r:]
-            av[:r] = av[:r] + self.plot_y[:r] #copy the values
-        av = av + self.plot_y #index offset 0
-        for r in range(-1, -1 * ceil(ma / 2), -1): #i.e. -1, -2
-            av[:r] = av[:r] + np.roll(self.plot_y, r)[:r]
-            av[r:] = av[r:] + self.plot_y[r:] #copy the values
-        av = av/ma
-
-        line = self.plot_elements[pe_key]
-        line[0].set_ydata(av)
-
-        self.ax.set_ylim([min(self.recent_y), max(self.recent_y)])
-        renderer = self.fig.canvas.get_renderer()
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
-        raw_data = renderer.buffer_rgba()
-        size = self.fig.canvas.get_width_height()
-        plot_image = pygame.image.frombuffer(raw_data, size, "RGBA")
-        return plot_image, size
-
-
-
-label_PRES = "TRANS"
-label_FUEL = "FUEL"
+label_PRES = " TRANS "
+label_FUEL = " FUEL  "
+label_BATT = " BATT  "
 pe_PRES = 0
 
 #set up pressure transducer on pin 0:
-pressure = Monitor(0)
+pressure = MSP600(0, plotlabels = [label_PRES], ma=3)
 
 
 #set up main display:
@@ -161,19 +65,61 @@ disp1 = pygame.display.set_mode((screen_width,screen_height))
 disp1.fill((0, 0, 0))
 
 #set up pygame_gui:
-manager = pygame_gui.UIManager((800, 600))#, 'data/themes/status_bar_theme.json')
-overview = pygame_gui.elements.UITabContainer(pygame.Rect((0, 0), (screen_width, screen_height)), manager, None, object_id=ObjectID('#overview', '@UITabContainer'))
-ID_tab1 = overview.add_tab(label_PRES, '#tab_pres')
-ID_tab2 = overview.add_tab(label_FUEL, '#tab_fuel')
-#print(overview.get_object_ids())
-# add a button to tab 2:
-pygame_gui.elements.UIButton(pygame.Rect((0, 0), (120, 40)),'button!', manager, container=overview.tabs[ID_tab2]['container'], object_id='#tab_2_button')
+manager = pygame_gui.UIManager((800, 600), 'theme.json')
+rect_screen = pygame.Rect((0, 0), (screen_width, screen_height))
+overview = pygame_gui.elements.UITabContainer(rect_screen, manager, None,
+                                              button_height=50)#, class_id='@UITabContainer'))
+ID_tab1 = overview.add_tab(label_PRES, '#tab_button')
+ID_tab2 = overview.add_tab(label_FUEL, '#tab_button')
+ID_tab3 = overview.add_tab(label_BATT, '#tab_button')
+overview.set_dimensions((screen_width, screen_height), clamp_to_container=True)
+#get the dimensions of space inside each tab:
+overview_container = overview.tabs[ID_tab1]['container'].get_container()
+dim_ovr_x = overview_container.get_rect().x
+dim_ovr_y = overview_container.get_rect().y
+dim_ovr_w = overview_container.get_rect().size[0]
+dim_ovr_h = overview_container.get_rect().size[1]
+
+
+#BUTTONS and other interactive elements:
+buttonplcr = Buttonplacer(dim_ovr_x, dim_ovr_y, dim_ovr_w, dim_ovr_h)
+#trans:
+trans_select_60s = pygame_gui.elements.UIButton(buttonplcr.placetopright(1),'-60s', manager,
+    container=overview.tabs[ID_tab1]['container'],
+    object_id=ObjectID(object_id='#button'))
+trans_select_5m = pygame_gui.elements.UIButton(buttonplcr.placetopright(2),'-5m', manager,
+    container=overview.tabs[ID_tab1]['container'],
+    object_id=ObjectID(object_id='#button'))
+#fuel:
+pygame_gui.elements.UIButton(buttonplcr.placetopright(1),'12V ulim', manager,
+                             container=overview.tabs[ID_tab2]['container'],
+                             object_id=ObjectID(object_id='#button'))
+pygame_gui.elements.UIButton(buttonplcr.placetopright(2),'10V ulim', manager,
+                             container=overview.tabs[ID_tab2]['container'],
+                             object_id=ObjectID(object_id='#button'))
+pygame_gui.elements.UIButton(buttonplcr.placetopright(3),'-20m', manager,
+                             container=overview.tabs[ID_tab2]['container'],
+                             object_id=ObjectID(object_id='#button'))
+pygame_gui.elements.UIButton(buttonplcr.placetopright(4),'-60m', manager,
+                             container=overview.tabs[ID_tab2]['container'],
+                             object_id=ObjectID(object_id='#button'))
+pygame_gui.elements.UIButton(buttonplcr.placetopright(5),'-180m', manager,
+                             container=overview.tabs[ID_tab2]['container'],
+                             object_id=ObjectID(object_id='#button'))
+#battery:
+pygame_gui.elements.UIButton(buttonplcr.placetopright(1),'6V llim', manager,
+                             container=overview.tabs[ID_tab3]['container'],
+                             object_id=ObjectID(object_id='#button'))
+pygame_gui.elements.UIButton(buttonplcr.placetopright(2),'0V llim', manager,
+                             container=overview.tabs[ID_tab3]['container'],
+                             object_id=ObjectID(object_id='#button'))
 
 
 #initialize plot:
 #pressure.collect()
-image_plot0, size = pressure.get_updated_figure(label_PRES)
-pgui_plot = pygame_gui.elements.ui_image.UIImage(pygame.Rect((100, 100), (size[0], size[1])),
+raw_data, size = pressure.get_updated_figure(label_PRES)
+image_plot0 = pygame.image.frombuffer(raw_data, size, "RGBA")
+pgui_plot = pygame_gui.elements.ui_image.UIImage(pygame.Rect((0, 0), (size[0], size[1])),
                                                  image_plot0,
                                                  manager,
                                                  container=overview.tabs[ID_tab1]['container'])
@@ -183,6 +129,11 @@ is_running = True
 while is_running:
     time_delta = clock.tick(60)/100.0
     for event in pygame.event.get():
+        if event.type == pygame_gui.UI_BUTTON_PRESSED:
+            if event.ui_element == trans_select_60s:
+                pressure.set_trelative(-60)
+            elif event.ui_element == trans_select_5m:
+                pressure.set_trelative(-300)
         if event.type == pygame.QUIT:
             is_running = False
         manager.process_events(event)
@@ -192,7 +143,8 @@ while is_running:
 
     #update plot:
     if overview.get_tab()['text'] == label_PRES:
-        image_plot, size = pressure.get_updated_figure(label_PRES)
+        raw_data, size = pressure.get_updated_figure(label_PRES)
+        image_plot = pygame.image.frombuffer(raw_data, size, "RGBA")
         # update pygame_gui object showing the plot:
         pgui_plot.set_image(image_plot)
 
