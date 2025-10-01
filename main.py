@@ -68,7 +68,7 @@ disp1.fill((0, 0, 0))
 manager = pygame_gui.UIManager((800, 600), 'theme.json')
 rect_screen = pygame.Rect((0, 0), (screen_width, screen_height))
 overview = pygame_gui.elements.UITabContainer(rect_screen, manager, None,
-                                              button_height=50)#, class_id='@UITabContainer'))
+                                              )#button_height=50)#, class_id='@UITabContainer'))
 ID_tab1 = overview.add_tab(label_PRES, '#tab_button')
 ID_tab2 = overview.add_tab(label_FUEL, '#tab_button')
 ID_tab3 = overview.add_tab(label_BATT, '#tab_button')
