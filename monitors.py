@@ -1,5 +1,3 @@
-#import pygame
-#import pygame_gui
 from datetime import datetime, timezone
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,29 +5,29 @@ from math import ceil
 import matplotlib as mpl
 import matplotlib.font_manager as fm
 from pathlib import Path
+import os
+
+dir_log = "log"
 
 class Monitor:
     def __init__(self,
                  pin,
                  plotlabels,
-                 keepdata_trelative0: int = -60,
-                 update_freq=1):
-                 #plot_n: int = 1000,
-                 #dt_rolling = 50):
-                 #ma=3):
+                 t0_plot_relative: int = -60,
+                 update_ival=1,
+                 log_len = 300):
         self.pin = pin
-        # self.dt_rolling = dt_rolling
         self.plot_size_inches = [4, 2]
-        self.update_freq = update_freq
-        #self.plot_n = plot_n
+        self.update_ival = update_ival
         self._set_updated_epoch()
+        if log_len/update_ival % 1 != 0:
+            print("error: update interval [s] must be a factor of log length [s]")
+        self.log_chunk = np.zeros((2, 1 + int(log_len/update_ival)))
+        self.session_count = 0
 
-        #plot parameters:
-        #self.ma = ma
-        #self.store_moving_average_calculation = np.zeros((self.plot_n, self.ma))
-
-        self.recent_t = [self.t_updated_ts] #log here
-        self.recent_y = [0] #log here
+        if not os.path.exists(dir_log):
+            print("making directory {}".format(dir_log))
+            os.mkdir(dir_log)
 
         fig = plt.figure(figsize=[self.plot_size_inches[0], self.plot_size_inches[1]], dpi=100)
         fig.patch.set_alpha(0.1) # make the surrounding of the plot 90% transparent
@@ -53,60 +51,126 @@ class Monitor:
         cols = ['red']
 
         #initial dummy data:
-        self.set_trelative(keepdata_trelative0)
+        self.set_t0_plot_relative(t0_plot_relative)
         for idx, label in enumerate(plotlabels):
             line = ax.plot([0], [0], color=cols[idx], marker='None')
             self.plot_elements[label] =  [line]
 
-        #line_up = ax.plot(plot_trelative, self.plot_y, color='yellow', marker='None')
-        #line_down = ax.plot(plot_trelative, self.plot_y, color='yellow', marker='None')
+    def _collect_measurement(self):
+        return self.log_chunk[1][-1] + 0.1*(np.random.rand(1)[0]-0.5)
 
     def _set_updated_epoch(self):
         t_now = datetime.now(tz=timezone.utc)
         t_now_ts = datetime.timestamp(t_now)
         self.t_updated_ts = t_now_ts
 
-    def set_trelative(self, keepdata_trelative):
-        #self.plot_trelative = np.linspace(keepdata_trelative, 0, self.plot_n)
-        self.keepdata_trelative = keepdata_trelative
-
-    def _collect_measurement(self):
-        #return some dummy data:
-        return self.recent_y[-1] + 0.1*(np.random.rand(1)[0]-0.5)
+    def set_t0_plot_relative(self, tplotrange):
+        self.tplotrange = tplotrange
 
     def collect(self):#, dt_min = 0):
         self._set_updated_epoch()
-
-        #clear old data:
-        for idxt_rec in range(len(self.recent_t)):
-            if self.recent_t[idxt_rec] - self.t_updated_ts >= self.keepdata_trelative:#self.plot_trelative[0]:
-                break
-        self.recent_t = self.recent_t[idxt_rec:]
-        self.recent_y = self.recent_y[idxt_rec:]
-
-
-        if self.t_updated_ts - self.recent_t[-1] < self.update_freq:
+        if self.t_updated_ts - self.log_chunk[0][-1] < self.update_ival:
             return
 
-        # #wait for next measurement
-        # if t_now_ts - self.recent_t[-1] < dt_min:
-        #     pygame.time.wait(round(1000*(t_now_ts - self.recent_t[-1])))
-
-        #get measurement at t_now:
+        #get new measurement at t_now:
         y = self._collect_measurement()
+
+        #roll data back:
+        self.log_chunk[:,:-1] = self.log_chunk[:,1:]
+
         #add new data:
-        if not np.isnan(y):
-            self.recent_t.append(self.t_updated_ts)
-            self.recent_y.append(y)
+        self.log_chunk[0,-1] = self.t_updated_ts
+        #if not np.isnan(y):
+        self.log_chunk[1,-1] = y
 
-        # idxt_rec = 0
-        # while self.recent_t[idxt_rec] - t_now_ts >= self.keepdata_trelative:#self.plot_trelative[0]:
-        #     idxt_rec = idxt_rec + 1
+        self.session_count = self.session_count + 1
+        if self.session_count % (self.log_chunk.shape[1] - 1) == 0:
+            self.log_to_disk()
 
-    def log_to_disk(self):
+
+    def log_to_disk(self, prefix="sensor"):
         #store the raw data
-        #recalculate NOBS, mean, etc.
-        pass
+        #self.log_chunk
+        #print("logging at t={}".format(self.t_updated_ts))
+        np.save(os.path.join(dir_log, '{:.0f}_{}.npy'.format(self.log_chunk[0, -1], prefix)), self.log_chunk[:, 1:]) #<-- log these indicies
+
+
+    def get_updated_figure(self, pe_key):
+        #plot_y = self.interpolate_data_to_plot_axis()
+
+        # #perform a moving average, but keep the array size the same, so the beginning and end values are not affected:
+        # row = 0
+        # av = self.store_moving_average_calculation
+        # for r in range((self.ma // 2), 0, -1): #i.e. 3, 2, 1
+        #     av[r:,row] = np.roll(plot_y, r)[r:]
+        #     av[:r,row] = plot_y[:r] #copy the values
+        #     row = row + 1
+        # av[:,row] = plot_y[:] #index offset 0
+        # row = row + 1
+        # for r in range(-1, -1 * ceil(self.ma / 2), -1): #i.e. -1, -2
+        #     av[:r,row] = np.roll(plot_y, r)[:r]
+        #     av[r:,row] = plot_y[r:] #copy the values
+        #     row = row + 1
+        # ymean = np.mean(av,axis=1)
+
+        pe = self.plot_elements[pe_key]
+        line = pe[0]
+
+        line[0].set_xdata(self.log_chunk[0, :] - self.t_updated_ts)
+        line[0].set_ydata(self.log_chunk[1, :])
+
+        #self.ax.set_xlim([self.plot_trelative[0], 0])
+        self.ax.set_xlim([self.tplotrange, 0])
+        self.ax.set_ylim([np.nanmin(self.log_chunk[1, :]), np.nanmax(self.log_chunk[1, :])])
+        renderer = self.fig.canvas.get_renderer()
+        self.fig.canvas.draw()
+        self.fig.canvas.flush_events()
+        raw_data = renderer.buffer_rgba()
+        size = self.fig.canvas.get_width_height()
+        return raw_data, size
+
+class MSP600(Monitor):
+    def __init__(self,
+                 pin,
+                 plotlabels,
+                 t0_plot_relative: int = -30,
+                 update_ival=1,
+                 log_len=300):
+        super().__init__(pin=pin,
+                         plotlabels=plotlabels,
+                         t0_plot_relative=t0_plot_relative,
+                         update_ival=update_ival,
+                         log_len=log_len)
+
+        self.ax.set_ylabel('PSI', font=self.fpath, ha='right', va='top', fontsize=15)
+        self.ax.yaxis.set_label_coords(0.02, 0.98)
+        self.ax.set_xlabel('time [s]', font=self.fpath, ha='right', va='bottom', fontsize=15)
+        self.ax.xaxis.set_label_coords(0.98, 0.02)
+
+    def _collect_measurement(self):
+        # the following parameters are used in the circuit:
+        gain = 8
+        R1 = 100000 #voltage divider R1
+        R2 = 10000 #voltage divider R2
+        ratio_Vadc_Vsensor = 1 - R1 / (R1 + R2)  # <= 1 # the ratio of ADC input voltage to sensor voltage
+
+
+        # sensor_voltage = (A*pressure + B)
+        # ADC_input_voltage = (A*pressure + B) * ratio_Vadc_Vsensor
+        # reading = (A*pressure + B) * gain * ratio_Vadc_Vsensor
+        #  this is the data I collected for various known pressure
+        #  I rearranged for:
+        # reading / gain / ratio_Vadc_Vsensor = A * pressure + B
+        #  then fit the data to get:
+        self.A, self.B = [36.654043693598396, 1592.1703502859946]
+
+
+        # take a new reading:
+        reading = ((self.log_chunk[1, -1] * self.A) + self.B) * gain * ratio_Vadc_Vsensor + 2000 * (np.random.rand(1)[0] - 0.5) #PLACEHOLDER
+        pressure = (reading / gain / ratio_Vadc_Vsensor - self.B)/self.A
+
+
+        return pressure
 
     # def interpolate_data_to_plot_axis(self):
     #     #interpolate new plot arrays, then delete old data:
@@ -114,7 +178,7 @@ class Monitor:
     #
     #     idx_ti0 = len(self.recent_t) - 1 #save time by initializing here, this will always descend in the below loop
     #     for t_delta in self.plot_trelative[::-1][1:]:
-    #         #[::-1] because we go from delta t = 0 to self.keepdata_trelative (i.e. - 60)
+    #         #[::-1] because we go from delta t = 0 to self.tplotrange (i.e. - 60)
     #         #[1:] because we already got y at delta t = 0 in the above line
     #         ti = self.recent_t[-1] + t_delta
     #
@@ -145,68 +209,3 @@ class Monitor:
     #
     #     plot_y = np.array(plot_y[::-1])
     #     return plot_y
-
-    def get_updated_figure(self, pe_key):
-        #plot_y = self.interpolate_data_to_plot_axis()
-
-        # #perform a moving average, but keep the array size the same, so the beginning and end values are not affected:
-        # row = 0
-        # av = self.store_moving_average_calculation
-        # for r in range((self.ma // 2), 0, -1): #i.e. 3, 2, 1
-        #     av[r:,row] = np.roll(plot_y, r)[r:]
-        #     av[:r,row] = plot_y[:r] #copy the values
-        #     row = row + 1
-        # av[:,row] = plot_y[:] #index offset 0
-        # row = row + 1
-        # for r in range(-1, -1 * ceil(self.ma / 2), -1): #i.e. -1, -2
-        #     av[:r,row] = np.roll(plot_y, r)[:r]
-        #     av[r:,row] = plot_y[r:] #copy the values
-        #     row = row + 1
-        # ymean = np.mean(av,axis=1)
-
-        pe = self.plot_elements[pe_key]
-        line = pe[0]
-
-        # line[0].set_xdata(self.plot_trelative)
-        # line[0].set_ydata(ymean)
-        #line_up[0].set_ydata(ymin)
-        #line_down[0].set_ydata(ymax)
-        recent_t_np = np.array(self.recent_t)
-        line[0].set_xdata(recent_t_np - self.t_updated_ts)
-        line[0].set_ydata(self.recent_y)
-
-        #self.ax.set_xlim([self.plot_trelative[0], 0])
-        self.ax.set_xlim([self.keepdata_trelative, 0])
-        self.ax.set_ylim([min(self.recent_y), max(self.recent_y)])
-        renderer = self.fig.canvas.get_renderer()
-        self.fig.canvas.draw()
-        self.fig.canvas.flush_events()
-        raw_data = renderer.buffer_rgba()
-        size = self.fig.canvas.get_width_height()
-        return raw_data, size
-
-
-
-class MSP600(Monitor):
-    def __init__(self,
-                 pin,
-                 plotlabels,
-                 keepdata_trelative0: int = -30,
-                 update_freq=1):
-        super().__init__(pin=pin,
-                         plotlabels=plotlabels,
-                         keepdata_trelative0=keepdata_trelative0,
-                         update_freq=update_freq)
-        #calibration parameters:
-        self.A = 3.3321857915133117
-        self.B = 144.7427590102809
-        # sensor reading = (A*pressure + B) * gain
-        self.ax.set_ylabel('PSI', font=self.fpath, ha='right', va='top', fontsize=15)
-        self.ax.yaxis.set_label_coords(0.02, 0.98)
-        self.ax.set_xlabel('time [s]', font=self.fpath, ha='right', va='bottom', fontsize=15)
-        self.ax.xaxis.set_label_coords(0.98, 0.02)
-
-
-    def _collect_measurement(self):
-        return self.recent_y[-1] + 0.1*(np.random.rand(1)[0]-0.5)
-        # sensor reading = (A*pressure + B) * gain

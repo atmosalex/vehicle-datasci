@@ -6,23 +6,11 @@ import anim_wheel
 import sys
 from datetime import datetime, timezone
 import numpy as np
-
-#import pylab
+import controls
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.backends.backend_agg as agg
-
 from monitors import MSP600
-
-class Buttonplacer:
-    def __init__(self, dim_ovr_x, dim_ovr_y, dim_ovr_w, dim_ovr_h):
-        self.dim_ovr_x, self.dim_ovr_y, self.dim_ovr_w, self.dim_ovr_h = dim_ovr_x, dim_ovr_y, dim_ovr_w, dim_ovr_h
-        self.dim_but_w = 120
-        self.dim_but_h = 40
-        self.dim_but_pad = 1
-
-    def placetopright(self, i):
-        return pygame.Rect((self.dim_ovr_w - self.dim_but_w - self.dim_but_pad, self.dim_but_pad+ (i-1)*(2*self.dim_but_pad + self.dim_but_h)), (self.dim_but_w, self.dim_but_h))
 
 np.random.seed(532)
 clock = pygame.time.Clock()
@@ -44,14 +32,7 @@ plt.rcParams.update({
     "figure.edgecolor": "black",
 })
 
-label_PRES = " TRANS "
-label_FUEL = " FUEL  "
-label_BATT = " BATT  "
-pe_PRES = 0
-
-#set up pressure transducer on pin 0:
-pressure = MSP600(0, plotlabels = [label_PRES], update_freq=1)#, ma=3)
-
+log_from_startup = True
 
 #set up main display:
 pygame.init()
@@ -65,64 +46,32 @@ disp1 = pygame.display.set_mode((screen_width,screen_height))
 disp1.fill((0, 0, 0))
 
 #set up pygame_gui:
-manager = pygame_gui.UIManager((800, 600), 'theme.json')
+manager = pygame_gui.UIManager((1200, 800), 'theme.json')
 rect_screen = pygame.Rect((0, 0), (screen_width, screen_height))
 overview = pygame_gui.elements.UITabContainer(rect_screen, manager, None,
                                               button_height=50)#, class_id='@UITabContainer'))
-ID_tab1 = overview.add_tab(label_PRES, '#tab_button')
-ID_tab2 = overview.add_tab(label_FUEL, '#tab_button')
-ID_tab3 = overview.add_tab(label_BATT, '#tab_button')
+
+tab_ID_dict = controls.setup_tab_IDs(overview)
+
 overview.set_dimensions((screen_width, screen_height), clamp_to_container=True)
-#get the dimensions of space inside each tab:
-overview_container = overview.tabs[ID_tab1]['container'].get_container()
-dim_ovr_x = overview_container.get_rect().x
-dim_ovr_y = overview_container.get_rect().y
-dim_ovr_w = overview_container.get_rect().size[0]
-dim_ovr_h = overview_container.get_rect().size[1]
 
-
-#BUTTONS and other interactive elements:
-buttonplcr = Buttonplacer(dim_ovr_x, dim_ovr_y, dim_ovr_w, dim_ovr_h)
-#trans:
-trans_select_60s = pygame_gui.elements.UIButton(buttonplcr.placetopright(1),'-60s', manager,
-    container=overview.tabs[ID_tab1]['container'],
-    object_id=ObjectID(object_id='#button'))
-trans_select_5m = pygame_gui.elements.UIButton(buttonplcr.placetopright(2),'-5m', manager,
-    container=overview.tabs[ID_tab1]['container'],
-    object_id=ObjectID(object_id='#button'))
-#fuel:
-pygame_gui.elements.UIButton(buttonplcr.placetopright(1),'12V ulim', manager,
-                             container=overview.tabs[ID_tab2]['container'],
-                             object_id=ObjectID(object_id='#button'))
-pygame_gui.elements.UIButton(buttonplcr.placetopright(2),'10V ulim', manager,
-                             container=overview.tabs[ID_tab2]['container'],
-                             object_id=ObjectID(object_id='#button'))
-pygame_gui.elements.UIButton(buttonplcr.placetopright(3),'-20m', manager,
-                             container=overview.tabs[ID_tab2]['container'],
-                             object_id=ObjectID(object_id='#button'))
-pygame_gui.elements.UIButton(buttonplcr.placetopright(4),'-60m', manager,
-                             container=overview.tabs[ID_tab2]['container'],
-                             object_id=ObjectID(object_id='#button'))
-pygame_gui.elements.UIButton(buttonplcr.placetopright(5),'-180m', manager,
-                             container=overview.tabs[ID_tab2]['container'],
-                             object_id=ObjectID(object_id='#button'))
-#battery:
-pygame_gui.elements.UIButton(buttonplcr.placetopright(1),'6V llim', manager,
-                             container=overview.tabs[ID_tab3]['container'],
-                             object_id=ObjectID(object_id='#button'))
-pygame_gui.elements.UIButton(buttonplcr.placetopright(2),'0V llim', manager,
-                             container=overview.tabs[ID_tab3]['container'],
-                             object_id=ObjectID(object_id='#button'))
-
+button_dict = controls.setup_buttons(overview, manager, tab_ID_dict)
+if log_from_startup:
+    button_dict[controls.label_SYS]['log on'].disable()
+else:
+    button_dict[controls.label_SYS]['log off'].disable()
 
 #initialize plot:
-#pressure.collect()
-raw_data, size = pressure.get_updated_figure(label_PRES)
+
+#set up pressure transducer on pin 0:
+pressure = MSP600(0, plotlabels = [controls.label_PRES], update_ival=0.5, log_len=60)
+
+raw_data, size = pressure.get_updated_figure(controls.label_PRES)
 image_plot0 = pygame.image.frombuffer(raw_data, size, "RGBA")
 pgui_plot = pygame_gui.elements.ui_image.UIImage(pygame.Rect((0, 0), (size[0], size[1])),
                                                  image_plot0,
                                                  manager,
-                                                 container=overview.tabs[ID_tab1]['container'])
+                                                 container=overview.tabs[tab_ID_dict[controls.label_PRES]]['container'])
 
 
 is_running = True
@@ -130,10 +79,18 @@ while is_running:
     time_delta = clock.tick(60)/100.0
     for event in pygame.event.get():
         if event.type == pygame_gui.UI_BUTTON_PRESSED:
-            if event.ui_element == trans_select_60s:
-                pressure.set_trelative(-60)
-            elif event.ui_element == trans_select_5m:
-                pressure.set_trelative(-300)
+            if event.ui_element == button_dict['close']:
+                is_running = False
+            elif event.ui_element == button_dict[controls.label_PRES]['-60s']:
+                pressure.set_t0_plot_relative(-60)
+            elif event.ui_element == button_dict[controls.label_PRES]['-5m']:
+                pressure.set_t0_plot_relative(-300)
+            elif event.ui_element == button_dict[controls.label_SYS]['log on']:
+                button_dict[controls.label_SYS]['log off'].enable()
+                button_dict[controls.label_SYS]['log on'].disable()
+            elif event.ui_element == button_dict[controls.label_SYS]['log off']:
+                button_dict[controls.label_SYS]['log on'].enable()
+                button_dict[controls.label_SYS]['log off'].disable()
         if event.type == pygame.QUIT:
             is_running = False
         manager.process_events(event)
@@ -142,8 +99,8 @@ while is_running:
     pressure.collect()
 
     #update plot:
-    if overview.get_tab()['text'] == label_PRES:
-        raw_data, size = pressure.get_updated_figure(label_PRES)
+    if overview.get_tab()['text'] == controls.label_PRES:
+        raw_data, size = pressure.get_updated_figure(controls.label_PRES)
         image_plot = pygame.image.frombuffer(raw_data, size, "RGBA")
         # update pygame_gui object showing the plot:
         pgui_plot.set_image(image_plot)
