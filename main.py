@@ -10,7 +10,7 @@ import controls
 import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.backends.backend_agg as agg
-from monitors import MSP600
+import monitors
 
 np.random.seed(532)
 clock = pygame.time.Clock()
@@ -49,7 +49,7 @@ disp1.fill((0, 0, 0))
 manager = pygame_gui.UIManager((1200, 800), 'theme.json')
 rect_screen = pygame.Rect((0, 0), (screen_width, screen_height))
 overview = pygame_gui.elements.UITabContainer(rect_screen, manager, None,
-                                              button_height=50)#, class_id='@UITabContainer'))
+                                              )#button_height=50)#, class_id='@UITabContainer'))
 
 tab_ID_dict = controls.setup_tab_IDs(overview)
 
@@ -64,14 +64,19 @@ else:
 #initialize plot:
 
 #set up pressure transducer on pin 0:
-pressure = MSP600(0, plotlabels = [controls.label_PRES], update_ival=0.5, log_len=60)
-
-raw_data, size = pressure.get_updated_figure(controls.label_PRES)
-image_plot0 = pygame.image.frombuffer(raw_data, size, "RGBA")
-pgui_plot = pygame_gui.elements.ui_image.UIImage(pygame.Rect((0, 0), (size[0], size[1])),
-                                                 image_plot0,
-                                                 manager,
-                                                 container=overview.tabs[tab_ID_dict[controls.label_PRES]]['container'])
+pressure = monitors.MSP600(pin = 0,
+    plotlabels = [controls.label_PRES],
+    manager=manager,
+    plotcontainer=overview.tabs[tab_ID_dict[controls.label_PRES]]['container'],
+    update_ival=0.5,
+    log_len=60,)
+#set up fuel sender on pin 1:
+fuel = monitors.Fuel(pin=1,
+    plotlabels = [controls.label_FUEL],
+    manager=manager,
+    plotcontainer=overview.tabs[tab_ID_dict[controls.label_FUEL]]['container'],
+    update_ival=0.5,
+    log_len=60)
 
 
 is_running = True
@@ -96,14 +101,20 @@ while is_running:
         manager.process_events(event)
     manager.update(time_delta)
 
+    #collect new measurements:
     pressure.collect()
+    fuel.collect()
 
     #update plot:
-    if overview.get_tab()['text'] == controls.label_PRES:
-        raw_data, size = pressure.get_updated_figure(controls.label_PRES)
-        image_plot = pygame.image.frombuffer(raw_data, size, "RGBA")
-        # update pygame_gui object showing the plot:
-        pgui_plot.set_image(image_plot)
+    match overview.get_tab()['text']:
+        case controls.label_PRES:
+            pressure.update_figbuffer()
+            image_plot = pygame.image.frombuffer(pressure.figbuffer_raw_data, pressure.figbuffer_size, "RGBA")
+            pressure.pgui_plot.set_image(image_plot)
+        case controls.label_FUEL:
+            fuel.update_figbuffer()
+            image_plot = pygame.image.frombuffer(fuel.figbuffer_raw_data, fuel.figbuffer_size, "RGBA")
+            fuel.pgui_plot.set_image(image_plot)
 
     manager.draw_ui(disp1)
 

@@ -6,23 +6,26 @@ import matplotlib as mpl
 import matplotlib.font_manager as fm
 from pathlib import Path
 import os
-
+import pygame
+import pygame_gui
+cols = plt.rcParams['axes.prop_cycle'].by_key()['color']
 dir_log = "log"
 
 class Monitor:
     def __init__(self,
                  pin,
                  plotlabels,
+                 manager,
+                 plotcontainer,
                  t0_plot_relative: int = -60,
                  update_ival=1,
-                 log_len = 300):
+                 log_len = 300,):
         self.pin = pin
         self.plot_size_inches = [4, 2]
         self.update_ival = update_ival
         self._set_updated_epoch()
         if log_len/update_ival % 1 != 0:
             print("error: update interval [s] must be a factor of log length [s]")
-        self.log_chunk = np.zeros((2, 1 + int(log_len/update_ival)))
         self.session_count = 0
 
         if not os.path.exists(dir_log):
@@ -47,17 +50,33 @@ class Monitor:
             text_obj.set_fontname('RobotoMono-Regular')
         for text_obj in ax.get_yticklabels():
             text_obj.set_fontname('RobotoMono-Regular')
-        self.plot_elements = {}#, line_up, line_down]}
-        cols = ['red']
+        #cols = ['red'] #update this with a range of colors to choose from
 
-        #initial dummy data:
+        #initialize line for each parameter:
+        self.plot_elements_lines = {}
+        self.plot_elements_idx = {}
         self.set_t0_plot_relative(t0_plot_relative)
         for idx, label in enumerate(plotlabels):
+            self.plot_elements_idx[label] = idx
             line = ax.plot([0], [0], color=cols[idx], marker='None')
-            self.plot_elements[label] =  [line]
+            self.plot_elements_lines[label] =  [line]
 
-    def _collect_measurement(self):
-        return self.log_chunk[1][-1] + 0.1*(np.random.rand(1)[0]-0.5)
+        #initialize arrays to log data:
+        self.log_time = np.zeros((1, 1 + int(log_len/update_ival)))
+        self.log_elements = np.zeros((len(self.plot_elements_idx), 1 + int(log_len/update_ival)))
+
+        #update figure buffer:
+        self.update_figbuffer()
+
+        #initial image to display:
+        image_plot0 = pygame.image.frombuffer(self.figbuffer_raw_data, self.figbuffer_size, "RGBA")
+        self.pgui_plot = pygame_gui.elements.ui_image.UIImage(pygame.Rect((0, 0), (self.figbuffer_size[0], self.figbuffer_size[1])),
+                                                              image_plot0,
+                                                              manager,
+                                                              container=plotcontainer)
+
+    def _collect_measurement(self, element_idx):
+        return self.log_elements[element_idx][-1] + 0.1*(np.random.rand(1)[0]-0.5)
 
     def _set_updated_epoch(self):
         t_now = datetime.now(tz=timezone.utc)
@@ -67,35 +86,38 @@ class Monitor:
     def set_t0_plot_relative(self, tplotrange):
         self.tplotrange = tplotrange
 
-    def collect(self):#, dt_min = 0):
+    def collect(self, element_idx=0):#, dt_min = 0):
         self._set_updated_epoch()
-        if self.t_updated_ts - self.log_chunk[0][-1] < self.update_ival:
+        if self.t_updated_ts - self.log_time[0][-1] < self.update_ival:
             return
 
-        #get new measurement at t_now:
-        y = self._collect_measurement()
-
         #roll data back:
-        self.log_chunk[:,:-1] = self.log_chunk[:,1:]
+        self.log_time[:,:-1] = self.log_time[:,1:]
+        self.log_elements[:,:-1] = self.log_elements[:,1:]
+
+        #get new measurement at t_now:
+        y = self._collect_measurement(element_idx)
 
         #add new data:
-        self.log_chunk[0,-1] = self.t_updated_ts
-        #if not np.isnan(y):
-        self.log_chunk[1,-1] = y
+        self.log_time[0,-1] = self.t_updated_ts
+        # time is stored at element 0, so increment by 1:
+        self.log_elements[element_idx,-1] = y
 
         self.session_count = self.session_count + 1
-        if self.session_count % (self.log_chunk.shape[1] - 1) == 0:
+        if self.session_count % (self.log_elements.shape[1] - 1) == 0:
             self.log_to_disk()
 
 
     def log_to_disk(self, prefix="sensor"):
         #store the raw data
-        #self.log_chunk
+        #self.log_elements
         #print("logging at t={}".format(self.t_updated_ts))
-        np.save(os.path.join(dir_log, '{:.0f}_{}.npy'.format(self.log_chunk[0, -1], prefix)), self.log_chunk[:, 1:]) #<-- log these indicies
+        #raise NotImplementedError
+        print("LOG")
+        #np.save(os.path.join(dir_log, '{:.0f}_{}.npy'.format(self.log_time[0, -1], prefix)), self.log_elements[:, 1:]) #<-- log these indicies
 
 
-    def get_updated_figure(self, pe_key):
+    def update_figbuffer(self):
         #plot_y = self.interpolate_data_to_plot_axis()
 
         # #perform a moving average, but keep the array size the same, so the beginning and end values are not affected:
@@ -112,32 +134,79 @@ class Monitor:
         #     av[r:,row] = plot_y[r:] #copy the values
         #     row = row + 1
         # ymean = np.mean(av,axis=1)
+        for label, line_collection in self.plot_elements_lines.items():
+            line = line_collection[0][0]
+            idx = self.plot_elements_idx[label]
 
-        pe = self.plot_elements[pe_key]
-        line = pe[0]
+            line.set_xdata(self.log_time[0, :] - self.t_updated_ts)
+            line.set_ydata(self.log_elements[idx, :])
 
-        line[0].set_xdata(self.log_chunk[0, :] - self.t_updated_ts)
-        line[0].set_ydata(self.log_chunk[1, :])
-
-        #self.ax.set_xlim([self.plot_trelative[0], 0])
-        self.ax.set_xlim([self.tplotrange, 0])
-        self.ax.set_ylim([np.nanmin(self.log_chunk[1, :]), np.nanmax(self.log_chunk[1, :])])
+            #self.ax.set_xlim([self.plot_trelative[0], 0])
+            self.ax.set_xlim([self.tplotrange, 0])
+            self.ax.set_ylim([np.nanmin(self.log_elements[idx, :]), np.nanmax(self.log_elements[idx, :])])
         renderer = self.fig.canvas.get_renderer()
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
-        raw_data = renderer.buffer_rgba()
-        size = self.fig.canvas.get_width_height()
-        return raw_data, size
+
+        self.figbuffer_raw_data = renderer.buffer_rgba()
+        self.figbuffer_size = self.fig.canvas.get_width_height()
+
+class Fuel(Monitor):
+    def __init__(self,
+                 pin,
+                 plotlabels,
+                 manager,
+                 plotcontainer,
+                 t0_plot_relative: int = -300,
+                 update_ival=1,
+                 log_len = 300,):
+        super().__init__(pin=pin,
+                         plotlabels=plotlabels,
+                         manager = manager,
+                         plotcontainer=plotcontainer,
+                         t0_plot_relative=t0_plot_relative,
+                         update_ival=update_ival,
+                         log_len=log_len)
+
+        self.ax.set_ylabel('Volts', font=self.fpath, ha='right', va='top', fontsize=15)
+        self.ax.yaxis.set_label_coords(0.02, 0.98)
+        self.ax.set_xlabel('time [s]', font=self.fpath, ha='right', va='bottom', fontsize=15)
+        self.ax.xaxis.set_label_coords(0.98, 0.02)
+
+    def _collect_measurement(self, element_idx):
+        # the following parameters are used in the circuit:
+        gain = 8
+        R1 = 100000 #voltage divider R1
+        R2 = 10000 #voltage divider R2
+        ratio_Vadc_Vsensor = 1 - R1 / (R1 + R2)  # <= 1 # the ratio of ADC input voltage to sensor voltage
+
+        # sensor_voltage = (A*pressure + B)
+        # ADC_input_voltage = (A*pressure + B) * ratio_Vadc_Vsensor
+        # reading = (A*pressure + B) * gain * ratio_Vadc_Vsensor
+        #   this is the data I collected for various known pressure
+        #   I rearranged for:
+        # reading / gain / ratio_Vadc_Vsensor = A * pressure + B
+        #   then fit the data to get:
+        self.A, self.B = [36.654043693598396, 1592.1703502859946]
+
+        # take a new reading:
+        reading = ((self.log_elements[element_idx, -1] * self.A) + self.B) * gain * ratio_Vadc_Vsensor + 2000 * (np.random.rand(1)[0] - 0.5)
+        pressure = (reading / gain / ratio_Vadc_Vsensor - self.B)/self.A
+        return pressure
 
 class MSP600(Monitor):
     def __init__(self,
                  pin,
                  plotlabels,
-                 t0_plot_relative: int = -30,
+                 manager,
+                 plotcontainer,
+                 t0_plot_relative: int = -60,
                  update_ival=1,
-                 log_len=300):
+                 log_len = 300,):
         super().__init__(pin=pin,
                          plotlabels=plotlabels,
+                         manager = manager,
+                         plotcontainer=plotcontainer,
                          t0_plot_relative=t0_plot_relative,
                          update_ival=update_ival,
                          log_len=log_len)
@@ -147,29 +216,25 @@ class MSP600(Monitor):
         self.ax.set_xlabel('time [s]', font=self.fpath, ha='right', va='bottom', fontsize=15)
         self.ax.xaxis.set_label_coords(0.98, 0.02)
 
-    def _collect_measurement(self):
+    def _collect_measurement(self, element_idx):
         # the following parameters are used in the circuit:
         gain = 8
         R1 = 100000 #voltage divider R1
         R2 = 10000 #voltage divider R2
         ratio_Vadc_Vsensor = 1 - R1 / (R1 + R2)  # <= 1 # the ratio of ADC input voltage to sensor voltage
 
-
         # sensor_voltage = (A*pressure + B)
         # ADC_input_voltage = (A*pressure + B) * ratio_Vadc_Vsensor
         # reading = (A*pressure + B) * gain * ratio_Vadc_Vsensor
-        #  this is the data I collected for various known pressure
-        #  I rearranged for:
+        #   this is the data I collected for various known pressure
+        #   I rearranged for:
         # reading / gain / ratio_Vadc_Vsensor = A * pressure + B
-        #  then fit the data to get:
+        #   then fit the data to get:
         self.A, self.B = [36.654043693598396, 1592.1703502859946]
 
-
         # take a new reading:
-        reading = ((self.log_chunk[1, -1] * self.A) + self.B) * gain * ratio_Vadc_Vsensor + 2000 * (np.random.rand(1)[0] - 0.5) #PLACEHOLDER
+        reading = ((self.log_elements[element_idx, -1] * self.A) + self.B) * gain * ratio_Vadc_Vsensor + 2000 * (np.random.rand(1)[0] - 0.5)
         pressure = (reading / gain / ratio_Vadc_Vsensor - self.B)/self.A
-
-
         return pressure
 
     # def interpolate_data_to_plot_axis(self):

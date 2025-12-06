@@ -79,15 +79,15 @@ def setup_buttons(overview, manager, tab_ID_dict):
 
     #system:
     button_dict[label_SYS] = {}
-    button_dict[label_SYS]['log now'] = pygame_gui.elements.UIButton(buttonplcr_tab.placetopright(1),'log now', manager,
-                                 container=overview.tabs[tab_ID_dict[label_SYS]]['container'],
-                                 object_id=ObjectID(object_id='#button'))
-    button_dict[label_SYS]['log 5m'] = pygame_gui.elements.UIButton(buttonplcr_tab.placetopright(2),'log 5m', manager,
-                                 container=overview.tabs[tab_ID_dict[label_SYS]]['container'],
-                                 object_id=ObjectID(object_id='#button'))
-    button_dict[label_SYS]['log 20m'] = pygame_gui.elements.UIButton(buttonplcr_tab.placetopright(3),'log 20m', manager,
-                                 container=overview.tabs[tab_ID_dict[label_SYS]]['container'],
-                                 object_id=ObjectID(object_id='#button'))
+    # button_dict[label_SYS]['log now'] = pygame_gui.elements.UIButton(buttonplcr_tab.placetopright(1),'log now', manager,
+    #                              container=overview.tabs[tab_ID_dict[label_SYS]]['container'],
+    #                              object_id=ObjectID(object_id='#button'))
+    # button_dict[label_SYS]['log 5m'] = pygame_gui.elements.UIButton(buttonplcr_tab.placetopright(2),'log 5m', manager,
+    #                              container=overview.tabs[tab_ID_dict[label_SYS]]['container'],
+    #                              object_id=ObjectID(object_id='#button'))
+    # button_dict[label_SYS]['log 20m'] = pygame_gui.elements.UIButton(buttonplcr_tab.placetopright(3),'log 20m', manager,
+    #                              container=overview.tabs[tab_ID_dict[label_SYS]]['container'],
+    #                              object_id=ObjectID(object_id='#button'))
     button_dict[label_SYS]['log on'] = pygame_gui.elements.UIButton(buttonplcr_tab.placetopright(5, 2),'log on', manager,
                                  container=overview.tabs[tab_ID_dict[label_SYS]]['container'],
                                  object_id=ObjectID(object_id='#button'))
