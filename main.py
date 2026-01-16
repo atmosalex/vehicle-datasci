@@ -48,14 +48,13 @@ disp1.fill((0, 0, 0))
 #set up pygame_gui:
 manager = pygame_gui.UIManager((1200, 800), 'theme.json')
 rect_screen = pygame.Rect((0, 0), (screen_width, screen_height))
-overview = pygame_gui.elements.UITabContainer(rect_screen, manager, None,
-                                              )#button_height=50)#, class_id='@UITabContainer'))
+overview = pygame_gui.elements.UITabContainer(rect_screen, manager, None, )#button_height=50)#, class_id='@UITabContainer'))
 
 tab_ID_dict = controls.setup_tab_IDs(overview)
 
 overview.set_dimensions((screen_width, screen_height), clamp_to_container=True)
 
-button_dict = controls.setup_buttons(overview, manager, tab_ID_dict)
+button_dict, label_dict, field_dict = controls.setup_elements(overview, manager, tab_ID_dict)
 if log_from_startup:
     button_dict[controls.label_SYS]['log on'].disable()
 else:
@@ -77,33 +76,97 @@ fuel = monitors.Fuel(pin=1,
     plotcontainer=overview.tabs[tab_ID_dict[controls.label_FUEL]]['container'],
     update_ival=0.5,
     log_len=60)
+#set up fuel sender on pin 2:
+battery = monitors.Battery(pin=2,
+    plotlabels = [controls.label_BATT],
+    manager=manager,
+    plotcontainer=overview.tabs[tab_ID_dict[controls.label_BATT]]['container'],
+    update_ival=0.5,
+    log_len=60)
 
+def set_pressure_calib_fields_from_dict(settings_current):
+    field_dict[controls.label_SYS]['gain'].set_text('{}'.format(settings_current['gain']))
+    field_dict[controls.label_SYS]['R1'].set_text('{}'.format(settings_current['R1']))
+    field_dict[controls.label_SYS]['R2'].set_text('{}'.format(settings_current['R2']))
+    field_dict[controls.label_SYS]['calib. A'].set_text('{}'.format(settings_current['A']))
+    field_dict[controls.label_SYS]['calib. B'].set_text('{}'.format(settings_current['B']))
+    label_dict[controls.label_SYS]['update OK'].set_text("")
+
+def set_dict_from_pressure_calib_fields(dict):
+    try:
+        g = float(field_dict[controls.label_SYS]['gain'].get_text())
+        r1 = float(field_dict[controls.label_SYS]['R1'].get_text())
+        r2 = float(field_dict[controls.label_SYS]['R2'].get_text())
+        A = float(field_dict[controls.label_SYS]['calib. A'].get_text())
+        B = float(field_dict[controls.label_SYS]['calib. B'].get_text())
+    except:
+        label_dict[controls.label_SYS]['update OK'].set_text("FAILED")
+        return
+    dict['gain'] = g
+    dict['R1'] = r1
+    dict['R2'] = r2
+    dict['A'] = A
+    dict['B'] = B
+    label_dict[controls.label_SYS]['update OK'].set_text("UPDATED")
+
+set_pressure_calib_fields_from_dict(pressure.settings_current)
 
 is_running = True
 while is_running:
     time_delta = clock.tick(60)/100.0
     for event in pygame.event.get():
-        if event.type == pygame_gui.UI_BUTTON_PRESSED:
-            if event.ui_element == button_dict['close']:
-                is_running = False
-            elif event.ui_element == button_dict[controls.label_PRES]['-60s']:
-                pressure.set_t0_plot_relative(-60)
-            elif event.ui_element == button_dict[controls.label_PRES]['-5m']:
-                pressure.set_t0_plot_relative(-300)
-            elif event.ui_element == button_dict[controls.label_SYS]['log on']:
-                button_dict[controls.label_SYS]['log off'].enable()
-                button_dict[controls.label_SYS]['log on'].disable()
-            elif event.ui_element == button_dict[controls.label_SYS]['log off']:
-                button_dict[controls.label_SYS]['log on'].enable()
-                button_dict[controls.label_SYS]['log off'].disable()
         if event.type == pygame.QUIT:
             is_running = False
+            break
+        elif event.type == pygame_gui.UI_BUTTON_PRESSED:
+            if event.ui_element is button_dict['close']:
+                is_running = False
+                break
+            elif event.ui_element.ui_container is overview.tabs[tab_ID_dict[controls.label_PRES]]['container'].get_container():
+                if event.ui_element is button_dict[controls.label_PRES]['-60s']:
+                    pressure.set_t0_plot_relative(-60)
+                elif event.ui_element is button_dict[controls.label_PRES]['-5m']:
+                    pressure.set_t0_plot_relative(-300)
+            elif event.ui_element.ui_container is overview.tabs[tab_ID_dict[controls.label_FUEL]]['container'].get_container():
+                if event.ui_element is button_dict[controls.label_FUEL]['-5m']:
+                    fuel.set_t0_plot_relative(-300)
+                elif event.ui_element is button_dict[controls.label_FUEL]['-30m']:
+                    fuel.set_t0_plot_relative(-1800)
+                elif event.ui_element is button_dict[controls.label_FUEL]['-60m']:
+                    fuel.set_t0_plot_relative(-3600)
+                elif event.ui_element is button_dict[controls.label_FUEL]['14V ulim']:
+                    fuel.y1_fixed = 14
+                elif event.ui_element is button_dict[controls.label_FUEL]['10V ulim']:
+                    fuel.y1_fixed = 10
+            elif event.ui_element.ui_container is overview.tabs[tab_ID_dict[controls.label_BATT]]['container'].get_container():
+                pass
+            elif event.ui_element.ui_container is overview.tabs[tab_ID_dict[controls.label_SYS]]['container'].get_container():
+                if event.ui_element is button_dict[controls.label_SYS]['log on']:
+                    button_dict[controls.label_SYS]['log off'].enable()
+                    button_dict[controls.label_SYS]['log on'].disable()
+                    pressure.log_enabled = True
+                    fuel.log_enabled = True
+                    battery.log_enabled = True
+                elif event.ui_element is button_dict[controls.label_SYS]['log off']:
+                    button_dict[controls.label_SYS]['log on'].enable()
+                    button_dict[controls.label_SYS]['log off'].disable()
+                    pressure.log_enabled = False
+                    fuel.log_enabled = False
+                    battery.log_enabled = False
+                elif event.ui_element is button_dict[controls.label_SYS]['update']:
+                    # convert the newly specified parameters to floats and enter into the pressure.settings_current dict
+                    set_dict_from_pressure_calib_fields(pressure.settings_current)
+                elif event.ui_element is button_dict[controls.label_SYS]['restore']:
+                    pressure.restore_default_settings()
+                    set_pressure_calib_fields_from_dict(pressure.settings_current)
+
         manager.process_events(event)
     manager.update(time_delta)
 
     #collect new measurements:
     pressure.collect()
     fuel.collect()
+    battery.collect()
 
     #update plot:
     match overview.get_tab()['text']:

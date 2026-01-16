@@ -10,6 +10,31 @@ import pygame
 import pygame_gui
 cols = plt.rcParams['axes.prop_cycle'].by_key()['color']
 dir_log = "log"
+fname_pressure_calibration_default = "pressure_calibration_default.txt"
+fname_pressure_calibration_current = "pressure_calibration_current.txt"
+
+def load_fuel_settings():
+    sep = ','
+    def load_dict_from_file(fname, sep=','):
+        dic = {}
+        with open(fname, 'r') as fi:
+            content = fi.readlines()
+        for line in content:
+            sline = line.strip('\n').split(sep)
+            dic[sline[0]] = float(sline[1])
+        return dic
+
+    default = load_dict_from_file(fname_pressure_calibration_default, sep)
+
+    if not os.path.isfile(fname_pressure_calibration_current):
+        with open(fname_pressure_calibration_current, 'w') as fo:
+            for key in default.keys():
+                fo.write("{}{}{}\n".format(key, sep, default[key]))
+        current = dict(default)
+    else:
+        current = load_dict_from_file(fname_pressure_calibration_current)
+
+    return default, current
 
 class Monitor:
     def __init__(self,
@@ -56,6 +81,9 @@ class Monitor:
         self.plot_elements_lines = {}
         self.plot_elements_idx = {}
         self.set_t0_plot_relative(t0_plot_relative)
+        self.y0_fixed = None
+        self.y1_fixed = None
+
         for idx, label in enumerate(plotlabels):
             self.plot_elements_idx[label] = idx
             line = ax.plot([0], [0], color=cols[idx], marker='None')
@@ -64,6 +92,8 @@ class Monitor:
         #initialize arrays to log data:
         self.log_time = np.zeros((1, 1 + int(log_len/update_ival)))
         self.log_elements = np.zeros((len(self.plot_elements_idx), 1 + int(log_len/update_ival)))
+        self.log_file_prefix = None
+        self.log_enabled = True
 
         #update figure buffer:
         self.update_figbuffer()
@@ -85,6 +115,12 @@ class Monitor:
 
     def set_t0_plot_relative(self, tplotrange):
         self.tplotrange = tplotrange
+
+    def set_y0_plot(self, y0):
+        self.y0_fixed = y0
+
+    def set_y1_plot(self, y1):
+        self.y1_fixed = y1
 
     def collect(self, element_idx=0):#, dt_min = 0):
         self._set_updated_epoch()
@@ -113,7 +149,8 @@ class Monitor:
         #self.log_elements
         #print("logging at t={}".format(self.t_updated_ts))
         #raise NotImplementedError
-        print("LOG")
+        if self.log_enabled and self.log_file_prefix is not None:
+            print("LOG")
         #np.save(os.path.join(dir_log, '{:.0f}_{}.npy'.format(self.log_time[0, -1], prefix)), self.log_elements[:, 1:]) #<-- log these indicies
 
 
@@ -141,9 +178,18 @@ class Monitor:
             line.set_xdata(self.log_time[0, :] - self.t_updated_ts)
             line.set_ydata(self.log_elements[idx, :])
 
-            #self.ax.set_xlim([self.plot_trelative[0], 0])
+            #update plot axis display range, etc.:
             self.ax.set_xlim([self.tplotrange, 0])
-            self.ax.set_ylim([np.nanmin(self.log_elements[idx, :]), np.nanmax(self.log_elements[idx, :])])
+            if self.y0_fixed is not None:
+                y0 = self.y0_fixed
+            else:
+                y0 = np.nanmin(self.log_elements[idx, :])
+            if self.y1_fixed is not None:
+                y1 = self.y1_fixed
+            else:
+                y1 = np.nanmax(self.log_elements[idx, :])
+            self.ax.set_ylim([y0, y1])
+
         renderer = self.fig.canvas.get_renderer()
         self.fig.canvas.draw()
         self.fig.canvas.flush_events()
@@ -159,7 +205,9 @@ class Fuel(Monitor):
                  plotcontainer,
                  t0_plot_relative: int = -300,
                  update_ival=1,
-                 log_len = 300,):
+                 log_len = 300,
+                 y0_fixed = 0,
+                 y1_fixed = 14):
         super().__init__(pin=pin,
                          plotlabels=plotlabels,
                          manager = manager,
@@ -167,11 +215,14 @@ class Fuel(Monitor):
                          t0_plot_relative=t0_plot_relative,
                          update_ival=update_ival,
                          log_len=log_len)
-
+        self.log_file_prefix = "log_fuel"
+        self.y0_fixed = y0_fixed
+        self.y1_fixed = y1_fixed
         self.ax.set_ylabel('Volts', font=self.fpath, ha='right', va='top', fontsize=15)
         self.ax.yaxis.set_label_coords(0.02, 0.98)
         self.ax.set_xlabel('time [s]', font=self.fpath, ha='right', va='bottom', fontsize=15)
         self.ax.xaxis.set_label_coords(0.98, 0.02)
+
 
     def _collect_measurement(self, element_idx):
         # the following parameters are used in the circuit:
@@ -191,8 +242,37 @@ class Fuel(Monitor):
 
         # take a new reading:
         reading = ((self.log_elements[element_idx, -1] * self.A) + self.B) * gain * ratio_Vadc_Vsensor + 2000 * (np.random.rand(1)[0] - 0.5)
-        pressure = (reading / gain / ratio_Vadc_Vsensor - self.B)/self.A
-        return pressure
+        fuel = (reading / gain / ratio_Vadc_Vsensor - self.B)/self.A
+        return np.abs(fuel)*0.1
+
+class Battery(Monitor):
+    def __init__(self,
+                 pin,
+                 plotlabels,
+                 manager,
+                 plotcontainer,
+                 t0_plot_relative: int = -300,
+                 update_ival=1,
+                 log_len = 300,
+                 y0_fixed = 0,
+                 y1_fixed = 14):
+        super().__init__(pin=pin,
+                         plotlabels=plotlabels,
+                         manager = manager,
+                         plotcontainer=plotcontainer,
+                         t0_plot_relative=t0_plot_relative,
+                         update_ival=update_ival,
+                         log_len=log_len)
+        self.log_file_prefix = None #no need to log battery voltage
+        self.y0_fixed = y0_fixed
+        self.y1_fixed = y1_fixed
+        self.ax.set_ylabel('Volts', font=self.fpath, ha='right', va='top', fontsize=15)
+        self.ax.yaxis.set_label_coords(0.02, 0.98)
+        self.ax.set_xlabel('time [s]', font=self.fpath, ha='right', va='bottom', fontsize=15)
+        self.ax.xaxis.set_label_coords(0.98, 0.02)
+
+    def _collect_measurement(self, element_idx):
+        return 12
 
 class MSP600(Monitor):
     def __init__(self,
@@ -211,16 +291,25 @@ class MSP600(Monitor):
                          update_ival=update_ival,
                          log_len=log_len)
 
+        self.log_file_prefix = "log_fuel"
         self.ax.set_ylabel('PSI', font=self.fpath, ha='right', va='top', fontsize=15)
         self.ax.yaxis.set_label_coords(0.02, 0.98)
         self.ax.set_xlabel('time [s]', font=self.fpath, ha='right', va='bottom', fontsize=15)
         self.ax.xaxis.set_label_coords(0.98, 0.02)
 
+        self.settings_default, self.settings_current = load_fuel_settings()
+        print("loaded pressure transducer circuit parameters:", self.settings_default)
+
+    def restore_default_settings(self):
+        self.settings_current = dict(self.settings_default)
+        if os.path.exists(fname_pressure_calibration_current):
+            os.remove(fname_pressure_calibration_current)
+
     def _collect_measurement(self, element_idx):
         # the following parameters are used in the circuit:
-        gain = 8
-        R1 = 100000 #voltage divider R1
-        R2 = 10000 #voltage divider R2
+        gain = self.settings_current['gain']#8
+        R1 = self.settings_current['R1']#100000 #voltage divider R1
+        R2 = self.settings_current['R2']#10000 #voltage divider R2
         ratio_Vadc_Vsensor = 1 - R1 / (R1 + R2)  # <= 1 # the ratio of ADC input voltage to sensor voltage
 
         # sensor_voltage = (A*pressure + B)
@@ -230,47 +319,9 @@ class MSP600(Monitor):
         #   I rearranged for:
         # reading / gain / ratio_Vadc_Vsensor = A * pressure + B
         #   then fit the data to get:
-        self.A, self.B = [36.654043693598396, 1592.1703502859946]
+        self.A, self.B = [self.settings_current['A'], self.settings_current['B']]#[36.654043693598396, 1592.1703502859946]
 
         # take a new reading:
         reading = ((self.log_elements[element_idx, -1] * self.A) + self.B) * gain * ratio_Vadc_Vsensor + 2000 * (np.random.rand(1)[0] - 0.5)
         pressure = (reading / gain / ratio_Vadc_Vsensor - self.B)/self.A
         return pressure
-
-    # def interpolate_data_to_plot_axis(self):
-    #     #interpolate new plot arrays, then delete old data:
-    #     plot_y = [self.recent_y[-1]] #got the first element at delta t = 0
-    #
-    #     idx_ti0 = len(self.recent_t) - 1 #save time by initializing here, this will always descend in the below loop
-    #     for t_delta in self.plot_trelative[::-1][1:]:
-    #         #[::-1] because we go from delta t = 0 to self.tplotrange (i.e. - 60)
-    #         #[1:] because we already got y at delta t = 0 in the above line
-    #         ti = self.recent_t[-1] + t_delta
-    #
-    #         while self.recent_t[idx_ti0] > ti:
-    #             idx_ti0 -= 1
-    #             if idx_ti0 < 0:
-    #                 break
-    #         idx_ti1 = idx_ti0 + 1
-    #
-    #         if idx_ti1 == 0:
-    #             #fill the rest with nans and break
-    #             plot_y = plot_y + [np.nan] * (self.plot_n - len(plot_y))
-    #             break
-    #         frac = (ti - self.recent_t[idx_ti0]) / (self.recent_t[idx_ti1] - self.recent_t[idx_ti0])
-    #         y = self.recent_y[idx_ti0] + frac * (self.recent_y[idx_ti1] - self.recent_y[idx_ti0])
-    #
-    #         # #nearest:
-    #         # if ti - self.recent_t[idx_ti0] < self.recent_t[idx_ti1] - ti:
-    #         #     y = self.recent_y[idx_ti0]
-    #         # else:
-    #         #     y = self.recent_y[idx_ti1]
-    #
-    #         plot_y.append(y)
-    #
-    #         #if len(self.recent_t) == 10:
-    #         #    print(self.recent_t[idx_ti0] - t_now_ts, ti - t_now_ts, self.recent_t[idx_ti1] - t_now_ts)
-    #         #    print("", idx_ti0, idx_ti1, len(self.recent_t), frac)#,  ti - t_now_ts, [t_ - t_now_ts for t_ in self.recent_t])
-    #
-    #     plot_y = np.array(plot_y[::-1])
-    #     return plot_y
